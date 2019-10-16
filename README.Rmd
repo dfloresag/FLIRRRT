@@ -1,0 +1,440 @@
+---
+title: "Untitled"
+output: github_document
+  always_allow_html: yes
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+```
+
+```{r, include=FALSE}
+library(frailtyHL)
+library(TMB)
+library(kableExtra)
+library(dplyr)
+library(coxme)
+```
+
+# Background : Steph and Rory's Results
+
+- **Endpoint:** Time to filter failure
+- **Treatment:** Type of filter (Heparin (H) vs citrate (C)
+- **Variables:** Two different variables (we can use either of them): 
+    - `group_ITT` for intention to treat (as randomised)
+    - `group_PP` for per protocol (as received/described in protocol)
+- **Covariates:** A bunch of covariates including `age`, `sex`, `APACHE` score, `weight` etc.
+- **Random Effect Structure:** *Possible* 2 levels of clustering: 
+    1. patient - filter has tobe replaced time to time (may not always fail);
+    2. side (left or right kidney). Level 2. is nested within level 1.
+- **Sample size:** 
+    - patients have a few filters but some have 15-20 and one 62 (!)
+    - size =1 or 2 for site (of course) 
+- The censoring scheme is similar to what Daniel simulated as time to filter cluster can be censored for each of them (it sometimes is). 
+
+Analysis in Brain et al. (2014) was done using a Cox model with 1 random effect (for `flirrtid = patient`) in `R` i.e. using `coxme()`.
+
+Steph tried to fit various AFT models in Stata using `mestreg` or `streg` with frailty/shared parameter
+
+Note that `mestreg` can fit up to 2 random effects (normally distributed) with a bunch of distributions (i.e. log-normal, Weibull, log-logistic, generalised gamma) for the endpoint. 
+
+### Results:
+ 
+ - `group_ITT` `age` `apache` as covariates 
+
+**One random effect**
+
+
+| **Distribution** | **Log-Likelihood** |
+|----|----|
+| log-logistic | -626.6  |
+| log-normal   | -638.24 |   
+| gen gamma  |-621.78|
+
+The last seems to be better
+
+**Two random effects** 
+
+- `group_ITT` `age` `apache` as covariates
+- 2 random effects (Patient ID and site)
+
+Only convergence with log-normal
+
+2 effects better than 1: LL=618.77 vs LL= -636.6
+
+- also tried to fit a parametric model with a frailty term (gamma or inverse gaussian) and shared parameter (patient ID). the problem is that the frailty term or random effect is not on the same scale. 
+- None of these models (except Weibull's, may be) gave a good fit based on the cox-Snell residuals. I did not pursue this. 
+- not always possible to get results with 2 random effects (1 ok though)
+- may depend on treatment as well. 
+- there is an effect of treatment (as reported in the paper) in the `PP` analysis, not in the `ITT` one.
+- Steph tried both but as convergence may work better with one treatment than the other depending on the model
+
+### Conclusion:
+
+- Generalized Gamma may be preferable but not able to fit a model with 2 random effects  (CV issues). 
+- May be improved by choosing the starting point
+- Log-normal model with 2 random effects definitely better than 1 random effect,
+- No tools to check gof.
+
+**New Findings**
+
+May be worth checking more whether the gamma model can be implemented. 
+
+I understand that the gamma function may create trouble in TMB. To be investigated further.
+
+1. you can fit a log-logistic AF model with 2 random effects
+
+    - LL=-626.6 vs LL=-607.5  ==> 2 random effects better  
+
+    - Appears to be better than log-normal (although they are not nested) 
+
+    *Indeed, and that's a problem for us, as it will not fulfill the requirements of an AFT*
+
+2. gen gamma works with a different integration method but results are a bit dubious with 2 random effects
+
+    - LL=-621.8 with 1 random effect (ok here) vs LL=-601.8 with 2 random effects 
+    
+    - but lots of "non concave" warnings along the way (dubious?). 
+
+    *Perhaps because they are not nested?*
+
+    One of the variance estimates is extremely small (flirrtid), hem!
+
+3) Weibull
+
+    - LL=-620.66 vs ?? 
+
+    - Still we may have an example where log-normal is not necessarily the best model
+
+
+# Implementation with `TMB`
+
+We attempted to use the templates created in the previous examples on this dataset.
+
+```{r, echo = FALSE, message=FALSE}
+
+flirrt_data <- read.csv("~/Dropbox/[Uni] MONASH/[Codes]/Examples/FLIRRT/FLIRRT_data_for_analysis.csv", na.strings = "")
+
+flirrt_data <-flirrt_data[order(flirrt_data$flirrtid),]
+
+flirrt_data$flirrtid_fac <- factor(flirrt_data$flirrtid)
+flirrt_data$site_fac <- factor(flirrt_data$site)
+
+id <- table(flirrt_data$flirrtid_fac)
+st <- table(flirrt_data$site_fac)
+
+id_v_st <- xtabs(~site+flirrtid_fac, data = flirrt_data)
+id_v_sd <- xtabs(~side+flirrtid_fac, data = flirrt_data)
+
+```
+
+
+```{r, message = FALSE}
+ow <- read.table("~/Dropbox/[Uni] MONASH/[AFT-Documents]/[Reports]/Datasets/ex_FLIRRT_OW_RI.txt", header=TRUE)
+tw <- read.table("~/Dropbox/[Uni] MONASH/[AFT-Documents]/[Reports]/Datasets/ex_FLIRRT_TW_N_RI.txt", header=TRUE)
+
+est <- plyr::join_all(dfs=list(ow, tw), type = "full")
+```
+
+## One-Way Random Intercept Model
+
+### Fixed Effects
+
+The Estimates and S.E. obtained with `TMB` **differ when the Log-Normal distribution is specified**, yet they are **similar when the Log-Logistic distribution is assumed**.
+
+- $\beta_0$
+
+```{r}
+est %>% 
+  filter(Parameter == "beta_0" & Model == "OW_RI") %>% 
+  select(c("Distributions","Procedures","Estimate","Std.Error")) %>%
+  kable() %>% 
+  kable_styling( bootstrap_options = c("striped", "hover", "condensed"))
+```
+
+- $\beta_1$
+
+```{r}
+est %>% 
+  filter(Parameter == "beta_1" & Model == "OW_RI") %>% 
+  select(c("Distributions","Procedures","Estimate","Std.Error")) %>%
+  kable() %>% 
+  kable_styling( bootstrap_options = c("striped", "hover", "condensed"))
+```
+
+- $\beta_2$
+
+```{r}
+est %>% 
+  filter(Parameter == "beta_2" & Model == "OW_RI") %>% 
+  select(c("Distributions","Procedures","Estimate","Std.Error")) %>%
+  kable() %>% 
+  kable_styling( bootstrap_options = c("striped", "hover", "condensed"))
+```
+
+- $\beta_3$
+
+```{r}
+est %>% 
+  filter(Parameter == "beta_3" & Model == "OW_RI") %>% 
+  select(c("Distributions","Procedures","Estimate","Std.Error")) %>%
+  kable() %>% 
+  kable_styling( bootstrap_options = c("striped", "hover", "condensed"))
+```
+
+### Variance Components 
+
+Values of the Estimates and S.E. are **similar values accross all combinations of distributions and procedures**.
+
+- $\sigma^2_{\texttt{flirrtid}}$
+
+```{r}
+est %>% 
+  filter(Parameter == "sigma2_subj" & Model == "OW_RI") %>% 
+  select(c("Distributions","Procedures","Estimate","Std.Error")) %>%
+  kable() %>% 
+  kable_styling( bootstrap_options = c("striped", "hover", "condensed"))
+```
+
+- $\log \sigma_0$
+
+```{r}
+est %>% 
+  filter(Parameter == "log_sigma_0" & Model == "OW_RI") %>% 
+  select(c("Distributions","Procedures","Estimate","Std.Error")) %>%
+  kable() %>% 
+  kable_styling(
+    bootstrap_options = c("striped", "hover", "condensed") 
+    )
+```
+
+## Two Way-Nested with Random Intercepts
+
+Following on what Steph found, we have fit a Two-Way Nested Random intercept. To verify which levels might be nested, we tabulate the labels for each patient (`flirrtid`) vs. either the `site`  or the `side`. The tabulation of patients vs `site` is as follows:
+```{r, echo = FALSE}
+id_v_st %>% kable() %>% kable_styling(bootstrap_options = c("striped", "hover", "condensed") )
+```
+It transpires from this table that **some of the patients switched sites a number of times**. For example, patient with label 11 is observed 2 times at site 1 and 3 times at site 3. Similarly, patient 18 is observed 11 times at site 1 and 12 at site 3. As a consequence, **we can't consider individuals as nested within sites**.
+
+A more natural nesting structure is provided by the side of the intubation. A tabulation of the labels informs us of the number of times the different levels of the potential effects are taken. 
+```{r, echo = FALSE}
+id_v_sd %>% kable() %>% kable_styling(bootstrap_options = c("striped", "hover", "condensed") )
+```
+We can conclude from this tabulation that **the patient and side per patient can be considered as nested**, however **the number of times the couple side/individual is quite variable**, ranging from 1 to 62.  
+
+### Fixed Effect Estimates
+
+Estimates and S.E. **look similar accross all combinations of distributions and procedures**.
+
+- $\beta_0$
+
+```{r}
+est %>% 
+  filter(Parameter == "beta_0" & Model == "TW_N_RI") %>% 
+  select(c("Distributions","Procedures","Estimate","Std.Error")) %>%
+  kable() %>% 
+  kable_styling( bootstrap_options = c("striped", "hover", "condensed"))
+```
+
+
+- $\beta_1$
+
+```{r}
+est %>% 
+  filter(Parameter == "beta_1" & Model == "TW_N_RI") %>% 
+  select(c("Distributions","Procedures","Estimate","Std.Error")) %>%
+  kable() %>% 
+  kable_styling( bootstrap_options = c("striped", "hover", "condensed"))
+```
+  
+
+- $\beta_2$
+
+```{r}
+est %>% 
+  filter(Parameter == "beta_2" & Model == "TW_N_RI") %>% 
+  select(c("Distributions","Procedures","Estimate","Std.Error")) %>%
+  kable() %>% 
+  kable_styling( bootstrap_options = c("striped", "hover", "condensed"))
+```
+
+  
+- $\beta_3$
+
+```{r}
+est %>% 
+  filter(Parameter == "beta_3" & Model == "TW_N_RI") %>% 
+  select(c("Distributions","Procedures","Estimate","Std.Error")) %>%
+  kable() %>% 
+  kable_styling( bootstrap_options = c("striped", "hover", "condensed"))
+```
+
+  
+### Variance Components
+
+Estimates and S.E. for $\sigma^2_{\texttt{flirrtid}}$ and $\sigma^2_{\texttt{side}\text{ within }\texttt{flirrtid}}$ **seem very different accross procedures**. Something very striking is the **very low estimate and S.E. for $\sigma^2_{\texttt{flirrtid}}$ under the  log-logistic distribution** (even after controlling for false convergence and estimation errors).
+
+A closer look makes me suspect that **the sense of the nesting is somewhat reversed in STATA** (see the similarity betwwen the estimate of $\sigma^2_{\texttt{side}\text{ within }\texttt{flirrtid}}$ with `TMB` and the $\sigma^2_{\texttt{flirrtid}}$ for STATA under Log-Normal, and conversely). I **don't exclude a problem with how the template deals with the nesting** even if it worked fine with the simulated example. To address potential issues, please find the expressions I used to create the likelihood and the template at the end of this document (INCOMPLETE). 
+
+- $\sigma^2_{\texttt{flirrtid}}$
+
+```{r}
+est %>% 
+  filter(Parameter == "sigma2_subj" & Model == "TW_N_RI") %>% 
+  select(c("Distributions","Procedures","Estimate","Std.Error")) %>%
+  kable() %>% 
+  kable_styling( bootstrap_options = c("striped", "hover", "condensed"))
+```
+  
+- $\sigma^2_{\texttt{side}\text{ within }\texttt{flirrtid}}$
+
+```{r}
+est %>% 
+  filter(Parameter == "sigma2_side" & Model == "TW_N_RI") %>% 
+  select(c("Distributions","Procedures","Estimate","Std.Error")) %>%
+  kable() %>% 
+  kable_styling( bootstrap_options = c("striped", "hover", "condensed"))
+```
+
+
+- $\log \sigma_0$ shows similar values of estimates and S.E. No problem there.
+
+```{r}
+est %>% 
+  filter(Parameter == "log_sigma_0" & Model == "TW_N_RI") %>% 
+  select(c("Distributions","Procedures","Estimate","Std.Error")) %>%
+  kable() %>% 
+  kable_styling(
+    bootstrap_options = c("striped", "hover", "condensed") 
+    )
+```
+  
+
+<!-- # Expressions for the Nested AFT (Incomplete) -->
+
+
+<!--  - $i \in \{ 1, \dots I\}$ the "site" -->
+<!--  - $j \in \{ 1, \dots J_i\}$ the "individual" in site $i$ -->
+<!--  - $k \in \{ 1, \dots K_{ij}\}$ the "time" of observation taken from individual $j$ at site $i$ -->
+
+<!-- $$ -->
+<!-- \log T_{i(j(k))} = \mathbf{x}_{i(j(k))}^{T} \mathbf{\beta} + u_i+ u_{i(j)} + \sigma_0 \varepsilon_{i(j(k))}  -->
+<!-- $$ -->
+<!-- where $u_i \sim \mathcal{N}(0,\sigma_{1}^{2})$ and $u_{i(j)} \sim \mathcal{N}(0,\sigma_{2}^{2})$. For simplicity of notation, in what follows, we shall be eliminating the parentheses.  -->
+
+<!-- By *stacking up* the different vectors of observations according to the different levels of nesting , we can define the following vectors: -->
+<!-- \begin{equation} -->
+<!-- \underbrace{\left[ -->
+<!--   \begin{array}{c} -->
+<!--     \log T_{ij1}\\ -->
+<!--     \vdots\\ -->
+<!--     \log T_{ijK_{ij}} -->
+<!--   \end{array} -->
+<!-- \right]}_{\log \mathbf{T}_{ij}} -->
+<!-- = -->
+<!-- \underbrace{\left[ -->
+<!--   \begin{array}{c} -->
+<!--     \mathbf{x}^{T}_{ij1}\\ -->
+<!--     \vdots\\  -->
+<!--     \mathbf{x}^{T}_{ijK_{ij}} -->
+<!--   \end{array} -->
+<!-- \right]}_{\mathbf{X}_{ij}} -->
+<!-- \mathbf{\beta}  -->
+<!-- +  -->
+<!-- u_{i} -->
+<!-- \underbrace{\left[ -->
+<!--   \begin{array}{c} -->
+<!--     1\\ -->
+<!--     \vdots\\  -->
+<!--     1 -->
+<!--   \end{array} -->
+<!-- \right] -->
+<!-- }_{\mathbf{1}_{K_{ij}}}+ -->
+<!-- u_{ij} -->
+<!-- \underbrace{\left[ -->
+<!--   \begin{array}{c} -->
+<!--     1\\ -->
+<!--     \vdots\\  -->
+<!--     1 -->
+<!--   \end{array} -->
+<!-- \right]}_{\mathbf{1}_{K_{ij}}} -->
+<!-- + -->
+<!-- \sigma_0 -->
+<!-- \underbrace{\left[ -->
+<!--   \begin{array}{c} -->
+<!--     \varepsilon_{ij1}\\ -->
+<!--     \vdots\\  -->
+<!--     \varepsilon_{ijK_{ij}} -->
+<!--   \end{array} -->
+<!-- \right]}_{\mathbf{\varepsilon}_{ij}} -->
+<!-- \end{equation} -->
+
+
+<!-- \begin{equation} -->
+<!-- \left[ -->
+<!--   \begin{array}{c} -->
+<!--     \log \mathbf{T}_{i1}\\ -->
+<!--     \vdots\\ -->
+<!--     \log \mathbf{T}_{iJ_{i}} -->
+<!--   \end{array} -->
+<!-- \right] -->
+<!-- = -->
+<!-- \left[ -->
+<!--   \begin{array}{c} -->
+<!--     \mathbf{X}_{i1}\\ -->
+<!--     \vdots\\  -->
+<!--     \mathbf{X}_{iJ_{i}} -->
+<!--   \end{array} -->
+<!-- \right] -->
+<!-- \mathbf{\beta}  -->
+<!-- +  -->
+<!-- u_{i} -->
+<!-- \left[ -->
+<!--   \begin{array}{c} -->
+<!--     \mathbf{1}_{K_{i1}}\\ -->
+<!--     \vdots\\  -->
+<!--     \mathbf{1}_{K_{iJ_{i}}} -->
+<!--   \end{array} -->
+<!-- \right] -->
+<!-- + -->
+
+<!-- \left[ -->
+<!--   \begin{array}{c} -->
+<!--     u_{i1}\mathbf{1}_{K_{i1}}\\ -->
+<!--     \vdots\\  -->
+<!--     u_{iJ_{i}} \mathbf{1}_{K_{iJ_{i}}} -->
+<!--   \end{array} -->
+<!-- \right] -->
+<!-- + -->
+<!-- \sigma_0 -->
+<!-- \left[ -->
+<!--   \begin{array}{c} -->
+<!--     \mathbf{\varepsilon}_{i1}\\ -->
+<!--     \vdots\\  -->
+<!--     \mathbf{\varepsilon}_{iJ_{i}} -->
+<!--   \end{array} -->
+<!-- \right] -->
+<!-- \end{equation} -->
+
+<!-- The likelihood for the model parameters $\mathbf{\theta} = [\mathbf{\beta}^T, \sigma_{1}^{2}\sigma_{2}^{2}, \sigma_{0}]$ is given by the marginal density, i.e.:  -->
+
+<!-- \begin{align} -->
+<!-- \mathcal{L(\mathbf{\theta})}  -->
+<!-- &=  -->
+<!-- \int f(T_{111}, \dots, T_{IJ_{I}K_{IJ_{I}}}, u_1, \dots ,u_{I}, u_{11}, \dots, u_{IJ_{I}}) \ d(u_1, \dots ,u_{I}, u_{11}, \dots, u_{IJ_{I}})\\ -->
+<!-- &= \int f(T_{111}, \dots, T_{IJ_{I}K_{IJ_{I}}} \ \vert \ u_1, \dots ,u_{I}, u_{11}, \dots, u_{IJ_{I}}) -->
+<!--  f(u_1, \dots ,u_{I}, u_{11}, \dots, u_{IJ_{I}}) \ d(u_1, \dots ,u_{I}, u_{11}, \dots, u_{IJ_{I}})\\ -->
+<!-- &= -->
+<!-- \int f(T_{111}, \dots, T_{IJ_{I}K_{IJ_{I}}}, u_1, \dots ,u_{I}, u_{11}, \dots, u_{IJ_{I}}) \ d(u_1, \dots ,u_{I}, u_{11}, \dots, u_{IJ_{I}})\\ -->
+<!-- &=  -->
+<!-- \int f(T_{111}, \dots, T_{IJ_{I}K_{IJ_{I}}} \ \vert \ u_1, \dots ,u_{I}, u_{11}, \dots, u_{IJ_{I}}) -->
+<!--  f(u_1, \dots ,u_{I})f(u_{11}, \dots, u_{IJ_{I}}) \ d(u_1, \dots ,u_{I}, u_{11}, \dots, u_{IJ_{I}}) \\ -->
+<!-- &= -->
+<!-- \int -->
+<!-- \left \{\prod_{i=1}^{I}\prod_{j=1}^{J_i} \prod_{k=1}^{K_{ij}} f(T_{ijk}\ \vert \  u_i, u_{i1}, \dots, u_{iJ_{i}})\right\} -->
+<!-- \prod_{i=1}^{I} f(u_i) \prod_{j=1}^{J_i}f(u_{ij}) \ d(u_1, \dots ,u_{I}, u_{11}, \dots, u_{IJ_{I}})\\ -->
+<!-- &=  -->
+<!-- \int \exp\left\{\sum_{i=1}^{I}\sum_{j=1}^{J_i} \sum_{k=1}^{K_{ij}} \log f(T_{ijk}\ \vert \  u_i, u_{i1}, \dots, u_{iJ_{i}}) + \sum_{i=1}^{I} \log  f(u_i) + \sum_{j=1}^{J_i} \log f(u_{ij}) \right\} d(u_1, \dots ,u_{I}, u_{11}, \dots, u_{IJ_{I}}) -->
+<!-- \end{align} -->
+
+<!-- Final expression is approximated via Laplace. -->
