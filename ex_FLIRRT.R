@@ -242,26 +242,30 @@ while(!est_ml & m <= MaxIt){
       ss_ln_tmb    <- unname(se_ss_ln_tmp[1:2, "Estimate"])
       ls_ln_tmb    <- unname(c(se_ss_ln_tmp[3, "Estimate"], se_bs_ln_tmp[6, "Estimate"]))
       
-      se_bs_ln_tmb <- unname(se_bs_ln_tmp[1:ncol(X), "Std. Error"])
-      se_ss_ln_tmb <- unname(se_ss_ln_tmp[1:2, "Std. Error"])
-      se_ls_ln_tmb <- unname(c(se_ss_ln_tmp[3, "Std. Error"], se_bs_ln_tmp[6, "Std. Error"]))
-      
       bs_ll_tmb    <- unname(se_bs_ll_tmp[1:ncol(X), "Estimate"])
       ss_ll_tmb    <- unname(se_ss_ll_tmp[1:2, "Estimate"])
       ls_ll_tmb    <- unname(c(se_ss_ll_tmp[3, "Estimate"], se_bs_ll_tmp[6, "Estimate"]))
-      
-      se_bs_ll_tmb <- unname(se_bs_ll_tmp[1:ncol(X), "Std. Error"])
-      se_ss_ll_tmb <- unname(se_ss_ll_tmp[1:2, "Std. Error"])
-      se_ls_ll_tmb <- unname(c(se_ss_ll_tmp[3, "Std. Error"], se_bs_ll_tmp[6, "Std. Error"]))
       
       bs_wb_tmb    <- unname(se_bs_wb_tmp[1:ncol(X), "Estimate"])
       ss_wb_tmb    <- unname(se_ss_wb_tmp[1:2, "Estimate"])
       ls_wb_tmb    <- unname(c(se_ss_wb_tmp[3, "Estimate"], se_bs_wb_tmp[6, "Estimate"]))
       
+      # bs_gg_pos_tmb    <- unname(se_bs_wb_tmp[1:ncol(X), "Estimate"])
+      # ss_gg_pos_tmb    <- rep(NA, times= 2)
+      # ls_gg_pos_tmb    <- rep(NA, times= 2)
+      
+      
+      se_bs_ln_tmb <- unname(se_bs_ln_tmp[1:ncol(X), "Std. Error"])
+      se_ss_ln_tmb <- unname(se_ss_ln_tmp[1:2, "Std. Error"])
+      se_ls_ln_tmb <- unname(c(se_ss_ln_tmp[3, "Std. Error"], se_bs_ln_tmp[6, "Std. Error"]))
+      
+      se_bs_ll_tmb <- unname(se_bs_ll_tmp[1:ncol(X), "Std. Error"])
+      se_ss_ll_tmb <- unname(se_ss_ll_tmp[1:2, "Std. Error"])
+      se_ls_ll_tmb <- unname(c(se_ss_ll_tmp[3, "Std. Error"], se_bs_ll_tmp[6, "Std. Error"]))
+      
       se_bs_wb_tmb <- unname(se_bs_wb_tmp[1:ncol(X), "Std. Error"])
       se_ss_wb_tmb <- unname(se_ss_wb_tmp[1:2, "Std. Error"])
       se_ls_wb_tmb <- unname(c(se_ss_wb_tmp[3, "Std. Error"], se_bs_wb_tmp[6, "Std. Error"]))
-      
     }
   }
   m <- m+1
